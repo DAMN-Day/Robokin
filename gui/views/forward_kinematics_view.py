@@ -7,6 +7,8 @@ Flujo:
   3. Presiona Calcular: la vista arma un `RobotModel` y llama al solver de
      `core.kinematics` en un hilo aparte para no congelar la interfaz.
   4. El resultado se dibuja en el panel derecho, en modo numerico o simbolico.
+  5. Presiona Simular: lee la misma tabla y abre (o enfoca) la ventana de
+     simulacion 3D en tiempo real, sin pasar por el solver simbolico.
 """
 
 from __future__ import annotations
@@ -158,6 +160,19 @@ class ForwardKinematicsView(BaseView):
         )
         self._btn_calcular.grid(row=0, column=1)
 
+        self._btn_simular = ctk.CTkButton(
+            acciones,
+            text="Simular",
+            width=120,
+            height=40,
+            corner_radius=radius("button"),
+            fg_color=color("accent"),
+            hover_color=color("primary_hover"),
+            font=font(role="body", weight="bold"),
+            command=self._simulate,
+        )
+        self._btn_simular.grid(row=1, column=2, padx=(10, 0))
+
         # -- linea de estado
         self._status = ctk.CTkLabel(
             cuerpo,
@@ -302,24 +317,34 @@ class ForwardKinematicsView(BaseView):
         self._status.configure(text=mensaje, text_color=color(tonos.get(tono, "text_muted")))
 
     # ------------------------------------------------------------------ #
+    # Lectura de la tabla, compartida por Calcular y Simular
+    # ------------------------------------------------------------------ #
+    def _read_robot(self, name: str):
+        """Lee y valida la tabla; devuelve `None` si hay un error ya reportado."""
+        self.dh_table.clear_highlights()
+        try:
+            robot = self.dh_table.get_robot(name=name)
+            robot.validate()
+        except TableValidationError as error:
+            self.dh_table.highlight_error(error.row, error.field)
+            self._set_status(str(error), "error")
+            self.results.show_error(str(error))
+            return None
+        except ModelError as error:
+            self._set_status(str(error), "error")
+            self.results.show_error(str(error))
+            return None
+        return robot
+
+    # ------------------------------------------------------------------ #
     # Calculo
     # ------------------------------------------------------------------ #
     def _calculate(self) -> None:
         if self._calculating:
             return
 
-        self.dh_table.clear_highlights()
-        try:
-            robot = self.dh_table.get_robot(name="Robot capturado")
-            robot.validate()
-        except TableValidationError as error:
-            self.dh_table.highlight_error(error.row, error.field)
-            self._set_status(str(error), "error")
-            self.results.show_error(str(error))
-            return
-        except ModelError as error:
-            self._set_status(str(error), "error")
-            self.results.show_error(str(error))
+        robot = self._read_robot("Robot capturado")
+        if robot is None:
             return
 
         self._calculating = True
@@ -391,3 +416,21 @@ class ForwardKinematicsView(BaseView):
         mensaje = f"No se pudo completar el calculo: {error}"
         self._set_status(mensaje, "error")
         self.results.show_error(mensaje)
+
+    # ------------------------------------------------------------------ #
+    # Simulacion
+    # ------------------------------------------------------------------ #
+    def _simulate(self) -> None:
+        """Abre (o enfoca) la ventana de simulacion 3D con la cadena actual.
+
+        La importacion es local para no cargar Matplotlib -mas pesado que el
+        resto de la aplicacion- hasta que el usuario realmente pida simular.
+        """
+        robot = self._read_robot("Robot simulado")
+        if robot is None:
+            return
+
+        from gui.simulation.window import open_simulation_window
+
+        open_simulation_window(self.winfo_toplevel(), robot)
+        self._set_status(f"Simulacion abierta para {robot.summary()}.", "ok")
